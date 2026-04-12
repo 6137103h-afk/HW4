@@ -12,17 +12,20 @@ The study evaluates the intervention’s impact on multiple dimensions, includin
 ## 📊 Key Findings (Combined N=80)
 
 ### 1. Enhanced STEAM Learning Outcomes ($p < .001$)
-* Cognitive Scaffolding: Learners in the visual storytelling group showed significant improvement in STEAM knowledge and task performance.
+* Cognitive Scaffolding: Learners in the visual storytelling group demonstrated significantly higher STEAM knowledge after controlling for pre-test scores ($F = 244.30,\ p < .001,\ \eta^2 = .76$).
 * So What? Visual storytelling reduces both language and conceptual complexity, helping young learners translate abstract STEAM concepts into concrete understanding.
 
 ### 2. TIncreased Learning Motivation and Engagement ($p < .01$)
-* Affective Impact: The experimental group demonstrated significantly higher learning motivation and sustained engagement compared to the lecture-based group ($F = 6.82,\ p < .01,\ \eta^2 = .08$).
+* Affective Impact: The experimental group showed significantly higher learning motivation (IMMS) than the lecture-based group after controlling for baseline differences ($F = 337.32,\ p < .001,\ \eta^2 = .81$).
 * So What? Narrative and visual elements create an immersive learning context that naturally maintains attention and interest.
 
-### 3. Improved Hands-on Performance ($p < .01$)
-* kill Development: Students receiving visual storytelling instruction performed significantly better in construction-based STEAM tasks ($t = 2.94,\ p < .01,\ d = 0.65$).
+### 3. Strengthened Language Ability and Participation ($p < .001$)
+* Skill Development: Students receiving visual storytelling instruction performed significantly better in hands-on STEAM tasks (CPAM) than the control group ($t = 18.25,\ p < .001,\ d = 4.08$).
 * So What? Multisensory input supports procedural understanding, enabling learners to more effectively translate knowledge into action.
 
+### 4. Improved Hands-on Performance ($p < .001$)
+* Behavioral Outcome: Learners in the experimental group demonstrated significantly higher English language performance (CELF-5) compared to the control group ($F = 314.07,\ p < .001,\ \eta^2 = .80$).
+* So What? Story-based contexts provide meaningful interaction opportunities, facilitating language use, communication, and participation even under ESL constraints.
 ---
 
 ## 🔬 Methodology & Statistics
