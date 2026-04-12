@@ -1,142 +1,327 @@
+import os
+import warnings
+from datetime import datetime
+
 import pandas as pd
-import numpy as np
 import pingouin as pg
 import plotly.express as px
-import os
-from datetime import datetime
-import warnings
 
 # =========================
-# 1. 基礎設定與工具
+# 1. 基礎設定
 # =========================
 DEFAULT_XLSX_PATH = "data_all.xlsx"
 RESULTS_DIR = "results"
+
 warnings.filterwarnings("ignore")
+
 
 def log(msg: str):
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}] {msg}")
 
+
 def ensure_dirs():
-    """建立產出用的資料夾結構"""
-    os.makedirs(f"{RESULTS_DIR}/plots", exist_ok=True)
-    os.makedirs(f"{RESULTS_DIR}/stats", exist_ok=True)
+    """建立結果輸出資料夾"""
+    os.makedirs(os.path.join(RESULTS_DIR, "plots"), exist_ok=True)
+    os.makedirs(os.path.join(RESULTS_DIR, "stats"), exist_ok=True)
+
 
 # =========================
-# 2. 資料前處理 (處理反向題與標題)
+# 2. 資料前處理
 # =========================
-def preprocess_data(df):
-    log("正在清理資料格式與處理反向題...")
-    
-    # ⭐ 關鍵修正：自動刪除標題前後的所有隱形空白，防止 KeyError
+def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
+    log("正在清理資料格式...")
+
+    # 去除欄位名稱前後空白
     df.columns = df.columns.str.strip()
-    
-    # A. 處理學習投入度 (共 26 題，採 1-5 分制)
-    # 根據量表：反向題為 5,6,7,8,14,15,16,21,22,23,24,25,26
-    eng_reverse = [5, 6, 7, 8, 14, 15, 16, 21, 22, 23, 24, 25, 26]
-    for q in eng_reverse:
-        col = f'Engage_Post_Q{q}'
-        if col in df.columns:
-            # 反向計分：1分變5分，5分變1分
-            df[col] = 6 - df[col]
-    
-    # 重新計算投入度平均分 (確保統計結果準確)
-    eng_cols = [f'Engage_Post_Q{i}' for i in range(1, 27) if f'Engage_Post_Q{i}' in df.columns]
-    if eng_cols:
-        df['Engage_Final_Avg'] = df[eng_cols].mean(axis=1)
 
-    # B. 處理認知負荷 (共 7 題，採 1-5 分制)
-    clq_cols = [f'CLQ_Post_Q{i}' for i in range(1, 8) if f'CLQ_Post_Q{i}' in df.columns]
-    if clq_cols:
-        df['CLQ_Final_Avg'] = df[clq_cols].mean(axis=1)
-    
+    # 統一 Group 欄位為 0/1
+    # 0 = Control, 1 = Experimental
+    if "Group" not in df.columns:
+        raise ValueError("找不到 'Group' 欄位。")
+
+    group_map = {
+        "Ctrl": 0,
+        "Control": 0,
+        "CG": 0,
+        "0": 0,
+        0: 0,
+        "Exp": 1,
+        "Experimental": 1,
+        "EG": 1,
+        "1": 1,
+        1: 1,
+    }
+
+    df["Group"] = df["Group"].map(group_map).fillna(df["Group"])
+
+    # 若 Group 還是不是 0/1，報錯
+    valid_groups = set(df["Group"].dropna().unique())
+    if not valid_groups.issubset({0, 1}):
+        raise ValueError(
+            f"Group 欄位格式不正確，偵測到的值為: {sorted(valid_groups)}。"
+            "請使用 Exp/Ctrl 或 1/0。"
+        )
+
+    # 需要的欄位
+    required_cols = [
+        "ID",
+        "Group",
+        "CELF5_Pre", "CELF5_Post",
+        "STEAM_Pre", "STEAM_Post",
+        "IMMS_Pre", "IMMS_Post",
+        "CPAM_Post",
+    ]
+
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        raise ValueError(f"缺少必要欄位: {missing_cols}")
+
+    # 轉成數值
+    numeric_cols = [
+        "CELF5_Pre", "CELF5_Post",
+        "STEAM_Pre", "STEAM_Post",
+        "IMMS_Pre", "IMMS_Post",
+        "CPAM_Post",
+    ]
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # 刪除必要欄位有缺值的列
+    before_rows = len(df)
+    df = df.dropna(subset=required_cols).copy()
+    after_rows = len(df)
+
+    if before_rows != after_rows:
+        log(f"已刪除 {before_rows - after_rows} 筆缺漏資料。")
+
+    # 範圍檢查
+    validate_score_range(df, "CELF5_Pre", 0, 10)
+    validate_score_range(df, "CELF5_Post", 0, 10)
+    validate_score_range(df, "STEAM_Pre", 0, 10)
+    validate_score_range(df, "STEAM_Post", 0, 10)
+    validate_score_range(df, "IMMS_Pre", 0, 50)
+    validate_score_range(df, "IMMS_Post", 0, 50)
+    validate_score_range(df, "CPAM_Post", 0, 45)
+
+    log(f"資料清理完成，可分析樣本數: {len(df)}")
     return df
 
+
+def validate_score_range(df: pd.DataFrame, col: str, min_val: float, max_val: float):
+    """檢查分數是否超出合理範圍"""
+    bad_mask = (df[col] < min_val) | (df[col] > max_val)
+    if bad_mask.any():
+        bad_count = int(bad_mask.sum())
+        raise ValueError(
+            f"欄位 '{col}' 有 {bad_count} 筆資料超出範圍 [{min_val}, {max_val}]。"
+        )
+
+
 # =========================
-# 3. 統計分析邏輯 (ANCOVA, T-Test, ICC)
+# 3. 描述統計
 # =========================
-def run_ancova(df, target_name, dv_col, covar_col):
-    """執行共變數分析 (ANCOVA) 並繪圖"""
-    log(f"執行 {target_name} 的 ANCOVA (排除前測差異)...")
+def save_descriptive_stats(df: pd.DataFrame):
+    log("輸出描述統計...")
+
+    group_labels = {0: "Control", 1: "Experimental"}
+    df_desc = df.copy()
+    df_desc["Group_Label"] = df_desc["Group"].map(group_labels)
+
+    cols = [
+        "CELF5_Pre", "CELF5_Post",
+        "STEAM_Pre", "STEAM_Post",
+        "IMMS_Pre", "IMMS_Post",
+        "CPAM_Post",
+    ]
+
+    desc = df_desc.groupby("Group_Label")[cols].agg(["mean", "std", "min", "max", "count"])
+    desc.to_csv(os.path.join(RESULTS_DIR, "stats", "descriptive_statistics.csv"), encoding="utf-8-sig")
+
+    print("\n--- Descriptive Statistics ---")
+    print(desc)
+
+
+# =========================
+# 4. ANCOVA
+# =========================
+def run_ancova(df: pd.DataFrame, target_name: str, dv_col: str, covar_col: str):
+    log(f"執行 {target_name} 的 ANCOVA...")
     try:
-        # 統計運算
-        res = pg.ancova(data=df, dv=dv_col, covar=covar_col, between='Group')
-        res.to_csv(f"{RESULTS_DIR}/stats/ancova_{target_name.lower()}.csv")
+        res = pg.ancova(
+            data=df,
+            dv=dv_col,
+            covar=covar_col,
+            between="Group"
+        )
+
+        output_path = os.path.join(RESULTS_DIR, "stats", f"ancova_{target_name.lower()}.csv")
+        res.to_csv(output_path, index=False, encoding="utf-8-sig")
+
         print(f"\n--- {target_name} ANCOVA Result ---")
         print(res)
-        
-        # 視覺化：前後測散佈圖與趨勢線
-        fig = px.scatter(df, x=covar_col, y=dv_col, color='Group', trendline='ols',
-                         title=f"{target_name} 效果分析 (ANCOVA)",
-                         labels={'Group': '組別 (0:對照, 1:實驗)', dv_col: '後測分數', covar_col: '前測分數'})
-        fig.write_image(f"{RESULTS_DIR}/plots/ancova_{target_name.lower()}.png")
+
+        # 繪圖
+        fig = px.scatter(
+            df,
+            x=covar_col,
+            y=dv_col,
+            color=df["Group"].map({0: "Control", 1: "Experimental"}),
+            trendline="ols",
+            title=f"{target_name} ANCOVA",
+            labels={
+                covar_col: f"{target_name} Pre-test",
+                dv_col: f"{target_name} Post-test",
+                "color": "Group",
+            },
+        )
+        fig.write_html(os.path.join(RESULTS_DIR, "plots", f"ancova_{target_name.lower()}.html"))
+
+        # 若環境有 kaleido，順便輸出 png
+        try:
+            fig.write_image(os.path.join(RESULTS_DIR, "plots", f"ancova_{target_name.lower()}.png"))
+        except Exception:
+            log(f"{target_name} 圖已輸出 HTML；PNG 未輸出（若需要可安裝 kaleido）。")
+
     except Exception as e:
         log(f"⚠️ {target_name} ANCOVA 執行失敗: {e}")
 
-def run_ttest(df, target_name, dv_col):
-    """執行獨立樣本 t 檢定並繪圖"""
-    log(f"執行 {target_name} 的組別差異檢定 (t-test)...")
+
+# =========================
+# 5. t-test
+# =========================
+def run_ttest(df: pd.DataFrame, target_name: str, dv_col: str):
+    log(f"執行 {target_name} 的獨立樣本 t 檢定...")
     try:
-        # 統計運算
-        res = pg.ttest(df[df['Group']==1][dv_col], df[df['Group']==0][dv_col])
-        res.to_csv(f"{RESULTS_DIR}/stats/ttest_{target_name.lower()}.csv")
+        exp_scores = df[df["Group"] == 1][dv_col]
+        ctrl_scores = df[df["Group"] == 0][dv_col]
+
+        res = pg.ttest(exp_scores, ctrl_scores, correction="auto")
+        output_path = os.path.join(RESULTS_DIR, "stats", f"ttest_{target_name.lower()}.csv")
+        res.to_csv(output_path, index=False, encoding="utf-8-sig")
+
         print(f"\n--- {target_name} t-test Result ---")
         print(res)
-        
-        # 視覺化：箱型圖與分佈點
-        fig = px.box(df, x='Group', y=dv_col, color='Group', points="all",
-                    title=f"{target_name} 組別平均值比較",
-                    labels={'Group': '組別 (0:對照, 1:實驗)', dv_col: '平均分數'})
-        fig.write_image(f"{RESULTS_DIR}/plots/ttest_{target_name.lower()}.png")
+
+        # 繪圖
+        fig = px.box(
+            df.assign(Group_Label=df["Group"].map({0: "Control", 1: "Experimental"})),
+            x="Group_Label",
+            y=dv_col,
+            color="Group_Label",
+            points="all",
+            title=f"{target_name} Group Comparison",
+            labels={
+                "Group_Label": "Group",
+                dv_col: target_name,
+            },
+        )
+        fig.write_html(os.path.join(RESULTS_DIR, "plots", f"ttest_{target_name.lower()}.html"))
+
+        try:
+            fig.write_image(os.path.join(RESULTS_DIR, "plots", f"ttest_{target_name.lower()}.png"))
+        except Exception:
+            log(f"{target_name} 圖已輸出 HTML；PNG 未輸出（若需要可安裝 kaleido）。")
+
     except Exception as e:
         log(f"⚠️ {target_name} t-test 執行失敗: {e}")
 
-def run_icc(df):
-    """執行評分者間信度分析 (ICC)"""
-    log("執行 CPAM 作品評分者間信度 (ICC)...")
-    try:
-        # 轉換資料格式以符合 ICC 需求
-        icc_df = df[['ID', 'CPAM_Rater_A', 'CPAM_Rater_B']].melt(id_vars='ID', var_name='Rater', value_name='Score')
-        res = pg.intraclass_corr(data=icc_df, targets='ID', raters='Rater', ratings='Score').set_index('Type')
-        res.to_csv(f"{RESULTS_DIR}/stats/icc_cpam.csv")
-        print("\n--- CPAM Inter-rater Reliability (ICC) ---")
-        print(res)
-    except Exception as e:
-        log(f"⚠️ ICC 分析失敗: {e}")
 
 # =========================
-# 4. 主執行流程
+# 6. 整理摘要表
+# =========================
+def build_summary_table(df: pd.DataFrame):
+    log("整理分析摘要表...")
+
+    summary_rows = []
+
+    analyses = [
+        ("CELF5", "ANCOVA", "CELF5_Post", "CELF5_Pre"),
+        ("STEAM", "ANCOVA", "STEAM_Post", "STEAM_Pre"),
+        ("IMMS", "ANCOVA", "IMMS_Post", "IMMS_Pre"),
+        ("CPAM", "TTEST", "CPAM_Post", None),
+    ]
+
+    for name, method, dv, covar in analyses:
+        try:
+            if method == "ANCOVA":
+                res = pg.ancova(data=df, dv=dv, covar=covar, between="Group")
+                group_row = res[res["Source"] == "Group"].iloc[0]
+
+                summary_rows.append({
+                    "Measure": name,
+                    "Method": "ANCOVA",
+                    "Statistic": "F",
+                    "Value": round(float(group_row["F"]), 3),
+                    "p-value": round(float(group_row["p-unc"]), 4),
+                    "Effect_Size": round(float(group_row["np2"]), 4) if "np2" in group_row else None
+                })
+
+            elif method == "TTEST":
+                exp_scores = df[df["Group"] == 1][dv]
+                ctrl_scores = df[df["Group"] == 0][dv]
+                res = pg.ttest(exp_scores, ctrl_scores, correction="auto").iloc[0]
+
+                summary_rows.append({
+                    "Measure": name,
+                    "Method": "Independent t-test",
+                    "Statistic": "t",
+                    "Value": round(float(res["T"]), 3),
+                    "p-value": round(float(res["p-val"]), 4),
+                    "Effect_Size": round(float(res["cohen-d"]), 4)
+                })
+
+        except Exception as e:
+            summary_rows.append({
+                "Measure": name,
+                "Method": method,
+                "Statistic": "ERROR",
+                "Value": str(e),
+                "p-value": None,
+                "Effect_Size": None
+            })
+
+    summary_df = pd.DataFrame(summary_rows)
+    summary_df.to_csv(
+        os.path.join(RESULTS_DIR, "stats", "analysis_summary.csv"),
+        index=False,
+        encoding="utf-8-sig"
+    )
+
+    print("\n--- Analysis Summary ---")
+    print(summary_df)
+
+
+# =========================
+# 7. 主程式
 # =========================
 def main():
     ensure_dirs()
     log("🚀 開始執行研究數據分析...")
-    
-    # 讀取 Excel
+
     if not os.path.exists(DEFAULT_XLSX_PATH):
-        log(f"❌ 找不到檔案: {DEFAULT_XLSX_PATH}，請確認檔案已放在正確資料夾。")
+        log(f"❌ 找不到檔案: {DEFAULT_XLSX_PATH}")
+        log("請把 Excel 檔放在同一個資料夾，並命名為 data_all.xlsx")
         return
 
     df = pd.read_excel(DEFAULT_XLSX_PATH)
-    
-    # 資料前處理 (包含欄位清理)
     df = preprocess_data(df)
 
-    # 第一階段：ANCOVA (分析知識與自我效能，排除起點差異)
-    # 分析知識測驗
-    run_ancova(df, "Knowledge", "Know_Post", "Know_Pre")
-    # 分析程式自我效能 (使用總分)
-    run_ancova(df, "CPSES", "CPSES_Post_Total", "CPSES_Pre_Total")
+    save_descriptive_stats(df)
 
-    # 第二階段：t-test (分析認知負荷與學習投入度)
-    # 分析認知負荷
-    run_ttest(df, "Cognitive_Load", "CLQ_Final_Avg")
-    # 分析學習投入程度
-    run_ttest(df, "Engagement", "Engage_Final_Avg")
+    # ANCOVA
+    run_ancova(df, "CELF5", "CELF5_Post", "CELF5_Pre")
+    run_ancova(df, "STEAM", "STEAM_Post", "STEAM_Pre")
+    run_ancova(df, "IMMS", "IMMS_Post", "IMMS_Pre")
 
-    # 第三階段：信度分析 (CPAM 作品評量)
-    run_icc(df)
+    # t-test
+    run_ttest(df, "CPAM", "CPAM_Post")
+
+    # 摘要表
+    build_summary_table(df)
 
     log(f"🎉 分析完成！所有結果已儲存至 '{RESULTS_DIR}' 資料夾。")
+
 
 if __name__ == "__main__":
     main()
