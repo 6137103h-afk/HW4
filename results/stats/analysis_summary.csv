@@ -1,0 +1,5 @@
+﻿Measure,Method,Statistic,Value,p-value,Effect_Size
+CELF5,ANCOVA,ERROR,'p-unc',,
+STEAM,ANCOVA,ERROR,'p-unc',,
+IMMS,ANCOVA,ERROR,'p-unc',,
+CPAM,TTEST,ERROR,'p-val',,
